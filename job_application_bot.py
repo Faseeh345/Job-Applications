@@ -4,9 +4,23 @@ import argparse
 import json
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 MAX_JOB_DESC_LENGTH = 220
+
+# Words ignored when building keyword fingerprints for field-label matching.
+_STOP_WORDS = frozenset(
+    {
+        "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+        "have", "has", "had", "do", "does", "did", "will", "would", "could",
+        "should", "may", "might", "shall", "can", "need", "dare", "ought",
+        "used", "what", "your", "you", "my", "me", "i", "we", "they", "it",
+        "this", "that", "their", "our", "its", "for", "of", "in", "on", "at",
+        "to", "by", "as", "or", "and", "but", "if", "not", "no", "yes",
+        "please", "enter", "provide", "write", "fill", "type", "put",
+        "field", "question", "section", "form",
+    }
+)
 
 
 @dataclass
@@ -19,7 +33,7 @@ class UserProfile:
 class MemoryStore:
     def __init__(self, path: Path) -> None:
         self.path = path
-        self.data = {"profile": asdict(UserProfile()), "qa": {}}
+        self.data = {"profile": asdict(UserProfile()), "qa": {}, "qa_keywords": []}
         self._load()
 
     def _load(self) -> None:
@@ -32,6 +46,7 @@ class MemoryStore:
         if isinstance(loaded, dict):
             self.data["profile"] = loaded.get("profile", self.data["profile"])
             self.data["qa"] = loaded.get("qa", {})
+            self.data["qa_keywords"] = loaded.get("qa_keywords", [])
 
     def _save(self) -> None:
         self.path.write_text(json.dumps(self.data, indent=2), encoding="utf-8")
@@ -62,7 +77,43 @@ class MemoryStore:
         if not normalized:
             return
         self.data.setdefault("qa", {})[normalized] = answer
+        # Also store with keyword fingerprint for fuzzy matching.
+        kw_list = self.data.setdefault("qa_keywords", [])
+        keywords = list(_extract_keywords(normalized))
+        # Update existing entry if same question was stored before.
+        for entry in kw_list:
+            if entry.get("question") == normalized:
+                entry["answer"] = answer
+                entry["keywords"] = keywords
+                self._save()
+                return
+        kw_list.append({"question": normalized, "keywords": keywords, "answer": answer})
         self._save()
+
+    def find_answer_by_keywords(self, field_label: str) -> Optional[str]:
+        """Return the stored answer whose keyword fingerprint best matches *field_label*.
+
+        At least one keyword must overlap.  When multiple entries tie, the one
+        with the highest overlap count wins.
+        """
+        label_keywords = _extract_keywords(field_label)
+        if not label_keywords:
+            return None
+        best_answer: Optional[str] = None
+        best_overlap = 0
+        for entry in self.data.get("qa_keywords", []):
+            stored_kw = set(entry.get("keywords", []))
+            overlap = len(label_keywords & stored_kw)
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_answer = entry.get("answer")
+        return best_answer if best_overlap > 0 else None
+
+
+def _extract_keywords(text: str) -> frozenset:
+    """Return meaningful lowercase words from *text*, ignoring stop words."""
+    words = text.lower().replace("?", " ").replace(":", " ").replace("/", " ").split()
+    return frozenset(w.strip(".,()[]") for w in words if len(w) >= 2 and w not in _STOP_WORDS)
 
 
 def _merge_unique(old_values: List[str], new_values: List[str]) -> List[str]:
@@ -181,6 +232,43 @@ class DocumentTailor:
         )
 
 
+class FormFiller:
+    """Maps common job-application field labels to values from a UserProfile."""
+
+    _PROFILE_FIELD_KEYWORDS: Dict[str, str] = {
+        "experience": "work_history",
+        "work": "work_history",
+        "history": "work_history",
+        "employment": "work_history",
+        "job": "work_history",
+        "education": "education",
+        "degree": "education",
+        "qualification": "education",
+        "university": "education",
+        "college": "education",
+        "school": "education",
+        "skill": "skills",
+        "skills": "skills",
+        "technology": "skills",
+        "technologies": "skills",
+        "language": "skills",
+        "languages": "skills",
+        "tool": "skills",
+        "tools": "skills",
+    }
+
+    @classmethod
+    def fill_from_profile(cls, field_label: str, profile: UserProfile) -> Optional[str]:
+        """Return a profile value whose category keyword appears in *field_label*."""
+        label_lower = field_label.lower()
+        for keyword, profile_field in cls._PROFILE_FIELD_KEYWORDS.items():
+            if keyword in label_lower:
+                values: List[str] = getattr(profile, profile_field, [])
+                if values:
+                    return ", ".join(values) if profile_field == "skills" else values[0]
+        return None
+
+
 class ApplicationBot:
     def __init__(self, memory_path: Path = Path(".bot_memory.json")) -> None:
         self.memory = MemoryStore(memory_path)
@@ -212,6 +300,53 @@ class ApplicationBot:
         )
         self.memory.remember_answer(question, answer)
         return answer
+
+    # ------------------------------------------------------------------
+    # Form-filling helpers
+    # ------------------------------------------------------------------
+
+    def fill_form_field(
+        self,
+        field_label: str,
+        user_input_func: Optional[Callable[[str], str]] = None,
+    ) -> Tuple[Optional[str], str]:
+        """Return *(value, source)* for a single form field.
+
+        Resolution order:
+        1. Profile data   – matched by keyword in the field label.
+        2. Memory store   – fuzzy keyword match against previously saved answers.
+        3. User prompt    – *user_input_func(field_label)* is called when provided
+                            and the answer is saved to memory for future reuse.
+
+        *source* is one of ``"profile"``, ``"memory"``, ``"user"``, or ``"unknown"``
+        (when no value is available and no prompt function was given).
+        """
+        profile = self.memory.get_profile()
+        value = FormFiller.fill_from_profile(field_label, profile)
+        if value is not None:
+            return value, "profile"
+
+        value = self.memory.find_answer_by_keywords(field_label)
+        if value is not None:
+            return value, "memory"
+
+        if user_input_func is not None:
+            value = user_input_func(field_label)
+            if value is not None and value.strip():
+                self.memory.remember_answer(field_label, value.strip())
+                return value.strip(), "user"
+
+        return None, "unknown"
+
+    def fill_form(
+        self,
+        fields: List[str],
+        user_input_func: Optional[Callable[[str], str]] = None,
+    ) -> Dict[str, Tuple[Optional[str], str]]:
+        """Fill every field in *fields* and return a mapping of
+        ``{field_label: (value, source)}``.
+        """
+        return {label: self.fill_form_field(label, user_input_func) for label in fields}
 
 
 def _load_jobs(path: Path) -> List[Dict[str, str]]:
@@ -250,6 +385,25 @@ def main() -> None:
         print(docs["resume"])
         print("\nTailored cover letter:\n")
         print(docs["cover_letter"])
+
+        # Interactive form-fill demo: the bot prompts for unknown fields.
+        print("\n--- Form-fill demo (press Enter to skip a field) ---")
+        sample_fields = [
+            "Expected salary",
+            "LinkedIn URL",
+            "Work experience summary",
+            "Skills / Technologies",
+            "Education / Degree",
+        ]
+
+        def _prompt(label: str) -> str:
+            return input(f"  [Bot] What should I enter for '{label}'? ").strip()
+
+        results = bot.fill_form(sample_fields, user_input_func=_prompt)
+        print("\nFilled form:")
+        for label, (value, source) in results.items():
+            status = f"[{source}]" if value else "[skipped]"
+            print(f"  {label}: {value or '(no value)'}  {status}")
 
 
 if __name__ == "__main__":
