@@ -2,7 +2,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from job_application_bot import ApplicationBot, CVAnalyzer, DocumentTailor, JobSearchEngine, UserProfile
+from job_application_bot import (
+    ApplicationBot,
+    CVAnalyzer,
+    DocumentTailor,
+    JobSearchEngine,
+    UserProfile,
+    _normalize_job_type,
+)
 
 
 class CVAnalyzerTests(unittest.TestCase):
@@ -24,7 +31,7 @@ class JobSearchTests(unittest.TestCase):
     def test_search_filters_requested_types(self):
         jobs = [
             {"title": "Backend Engineer", "type": "full-time"},
-            {"title": "Design Intern", "type": "intership"},
+            {"title": "Design Intern", "type": "internship"},
             {"title": "Data Intern", "type": "internship"},
             {"title": "Weekend Support", "type": "part-time"},
             {"title": "Contract QA", "type": "contract"},
@@ -33,6 +40,10 @@ class JobSearchTests(unittest.TestCase):
         results = JobSearchEngine.search(jobs, ["internship", "part time"])
 
         self.assertEqual([job["title"] for job in results], ["Design Intern", "Data Intern", "Weekend Support"])
+
+    def test_normalize_common_type_variants(self):
+        self.assertEqual(_normalize_job_type("part time"), "part-time")
+        self.assertEqual(_normalize_job_type("intership"), "internship")
 
 
 class TailoringAndMemoryTests(unittest.TestCase):
