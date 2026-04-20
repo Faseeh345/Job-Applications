@@ -124,8 +124,6 @@ def _split_values(line: str) -> List[str]:
 
 
 class JobSearchEngine:
-    VALID_TYPES = {"full-time", "part-time", "internship", "intership", "full time", "part time", "internships"}
-
     @classmethod
     def search(cls, jobs: List[Dict[str, str]], desired_types: List[str]) -> List[Dict[str, str]]:
         normalized_desired = {_normalize_job_type(job_type) for job_type in desired_types if job_type}
@@ -142,6 +140,7 @@ class JobSearchEngine:
 
 def _normalize_job_type(job_type: str) -> str:
     normalized = job_type.strip().lower().replace("_", " ")
+    # Handle common misspellings while preserving standard output values.
     if normalized == "intership" or normalized == "internships":
         return "internship"
     if normalized == "full time":

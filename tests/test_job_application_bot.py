@@ -25,13 +25,14 @@ class JobSearchTests(unittest.TestCase):
         jobs = [
             {"title": "Backend Engineer", "type": "full-time"},
             {"title": "Design Intern", "type": "intership"},
+            {"title": "Data Intern", "type": "internship"},
             {"title": "Weekend Support", "type": "part-time"},
             {"title": "Contract QA", "type": "contract"},
         ]
 
         results = JobSearchEngine.search(jobs, ["internship", "part time"])
 
-        self.assertEqual([job["title"] for job in results], ["Design Intern", "Weekend Support"])
+        self.assertEqual([job["title"] for job in results], ["Design Intern", "Data Intern", "Weekend Support"])
 
 
 class TailoringAndMemoryTests(unittest.TestCase):
