@@ -112,8 +112,14 @@ class MemoryStore:
 
 def _extract_keywords(text: str) -> frozenset:
     """Return meaningful lowercase words from *text*, ignoring stop words."""
-    words = text.lower().replace("?", " ").replace(":", " ").replace("/", " ").split()
-    return frozenset(w.strip(".,()[]") for w in words if len(w) >= 2 and w not in _STOP_WORDS)
+    cleaned = text.lower().translate(str.maketrans("?:/", "   "))
+    words = cleaned.split()
+    result = set()
+    for w in words:
+        stripped = w.strip(".,()[]")
+        if len(stripped) >= 2 and stripped not in _STOP_WORDS:
+            result.add(stripped)
+    return frozenset(result)
 
 
 def _merge_unique(old_values: List[str], new_values: List[str]) -> List[str]:
@@ -194,7 +200,8 @@ class JobSearchEngine:
 def _normalize_job_type(job_type: str) -> str:
     normalized = job_type.strip().lower().replace("_", " ")
     # Deliberately map common user input variants/misspellings to canonical values.
-    if normalized.startswith("inter") and normalized.rstrip("s").endswith("ship"):
+    _internship_variants = {"internship", "internships", "intership", "interships"}
+    if normalized in _internship_variants:
         return "internship"
     if normalized == "full time":
         return "full-time"
