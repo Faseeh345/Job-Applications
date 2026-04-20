@@ -141,7 +141,9 @@ class JobSearchEngine:
 def _normalize_job_type(job_type: str) -> str:
     normalized = job_type.strip().lower().replace("_", " ")
     # Deliberately map common user input variants/misspellings to canonical values.
-    if normalized == "intership" or normalized == "internships":
+    if normalized == "internships":
+        return "internship"
+    if normalized.startswith("inter") and normalized.endswith("ship"):
         return "internship"
     if normalized == "full time":
         return "full-time"
