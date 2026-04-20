@@ -6,6 +6,8 @@ from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
+MAX_JOB_DESC_LENGTH = 220
+
 
 @dataclass
 class UserProfile:
@@ -141,9 +143,7 @@ class JobSearchEngine:
 def _normalize_job_type(job_type: str) -> str:
     normalized = job_type.strip().lower().replace("_", " ")
     # Deliberately map common user input variants/misspellings to canonical values.
-    if normalized.startswith("inter") and normalized.endswith("ships"):
-        return "internship"
-    if normalized.startswith("inter") and normalized.endswith("ship"):
+    if normalized.startswith("inter") and normalized.rstrip("s").endswith("ship"):
         return "internship"
     if normalized == "full time":
         return "full-time"
@@ -160,7 +160,8 @@ class DocumentTailor:
         education_line = profile.education[0] if profile.education else "a strong academic foundation"
         return (
             f"Professional Summary: I bring {experience_line} and {education_line}. "
-            f"My strongest skills include {skills}, which align with this role: {job_description.strip()[:220]}."
+            f"My strongest skills include {skills}, which align with this role: "
+            f"{job_description.strip()[:MAX_JOB_DESC_LENGTH]}."
         )
 
     @staticmethod

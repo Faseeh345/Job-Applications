@@ -43,7 +43,7 @@ class JobSearchTests(unittest.TestCase):
 
     def test_normalize_common_type_variants(self):
         self.assertEqual(_normalize_job_type("part time"), "part-time")
-        self.assertEqual(_normalize_job_type("intership"), "internship")
+        self.assertEqual(_normalize_job_type("interships"), "internship")
 
 
 class TailoringAndMemoryTests(unittest.TestCase):
